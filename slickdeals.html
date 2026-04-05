@@ -307,7 +307,7 @@ function buildSourceUrl() {
   const hours = parseInt(document.getElementById('timeWindow').value);
   const days = hours ? Math.max(1, Math.ceil(hours / 24)) : 1095; // 1095 = ~all time
   return 'https://slickdeals.net/search?q=&searcharea=deals&searchin=first'
-    + '&sort=votes&searchtype=normal'
+    + '&sort=votes&sortorder=desc&searchtype=normal'
     + '&filters%5Bforum%5D%5B%5D=9'
     + '&filters%5Brating%5D%5B%5D=all'
     + '&filters%5Bdate%5D%5B%5D=' + days
