@@ -300,14 +300,18 @@
 
 <script>
 const ACTOR_ID = 'powerai~slickdeals-search-scraper';
-const BASE_URL  = 'https://slickdeals.net/forums/filtered/?f=9&sortfield=voteavg&sortorder=desc';
 
-// Map hours → threadage in days (SlickDeals URL param)
+// SlickDeals search URL format the actor understands:
+// forum 9 = Hot Deals, sort by votes, filters[date][] = days
 function buildSourceUrl() {
   const hours = parseInt(document.getElementById('timeWindow').value);
-  if (!hours) return BASE_URL; // All time — no threadage filter
-  const days = Math.max(1, Math.ceil(hours / 24));
-  return BASE_URL + '&threadage=' + days;
+  const days = hours ? Math.max(1, Math.ceil(hours / 24)) : 1095; // 1095 = ~all time
+  return 'https://slickdeals.net/search?q=&searcharea=deals&searchin=first'
+    + '&sort=votes&searchtype=normal'
+    + '&filters%5Bforum%5D%5B%5D=9'
+    + '&filters%5Brating%5D%5B%5D=all'
+    + '&filters%5Bdate%5D%5B%5D=' + days
+    + '&page=1';
 }
 
 function setStatus(msg, spinning = false) {
