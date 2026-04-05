@@ -107,6 +107,7 @@
       transition: border-color 0.15s;
     }
     .card:hover { border-color: #f97316; }
+    .card.fire { border-color: #dc2626; }
 
     .card-img {
       width: 100%;
@@ -127,6 +128,17 @@
 
     .card-body { padding: 14px; flex: 1; display: flex; flex-direction: column; gap: 8px; }
 
+    .card-store-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .store-logo {
+      height: 18px;
+      width: auto;
+      object-fit: contain;
+      filter: brightness(0.9);
+    }
     .card-store {
       font-size: 0.72rem;
       text-transform: uppercase;
@@ -134,6 +146,22 @@
       color: #f97316;
       font-weight: 600;
     }
+
+    .card-badges { display: flex; gap: 5px; flex-wrap: wrap; }
+    .badge {
+      display: inline-block;
+      font-size: 0.65rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .badge-fire   { background: #7f1d1d; color: #fca5a5; }
+    .badge-front  { background: #1e3a5f; color: #93c5fd; }
+    .badge-pop    { background: #3b1f6e; color: #c4b5fd; }
+    .badge-new    { background: #14532d; color: #86efac; }
+    .badge-rebate { background: #78350f; color: #fcd34d; }
 
     .card-title {
       font-size: 0.92rem;
@@ -169,9 +197,11 @@
       border-top: 1px solid #2d3148;
       padding-top: 8px;
       margin-top: auto;
+      gap: 8px;
     }
-    .votes { color: #4ade80; font-weight: 700; font-size: 0.85rem; }
+    .votes { color: #4ade80; font-weight: 700; font-size: 0.85rem; white-space: nowrap; }
     .votes.zero { color: #64748b; }
+    .meta-right { text-align: right; }
 
     .card-link {
       display: block;
@@ -186,18 +216,6 @@
       transition: background 0.1s;
     }
     .card-link:hover { background: #1e2235; }
-
-    .badge-hot {
-      display: inline-block;
-      background: #7c2d12;
-      color: #fb923c;
-      font-size: 0.68rem;
-      padding: 1px 6px;
-      border-radius: 4px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }
 
     .empty {
       grid-column: 1 / -1;
@@ -273,7 +291,7 @@
 
 <div id="status"><span class="spinner" id="spinner"></span><span id="statusText">Ready. Click "Fetch Deals" to start.</span></div>
 <div id="summary"></div>
-<div id="rawToggle" onclick="toggleRaw()" style="display:none">Show raw field names (debug)</div>
+<div id="rawToggle" onclick="toggleRaw()" style="display:none">Show raw data (debug)</div>
 <pre id="rawBox"></pre>
 <div id="grid"></div>
 
@@ -301,44 +319,22 @@ async function runScrape() {
   setStatus('Starting actor run on Apify...', true);
 
   try {
-    // Try a few common input formats that URL-based Apify scrapers accept
-    const inputCandidates = [
-      { url, maxItems },
-      { startUrls: [{ url }], maxItems },
-      { searchUrl: url, maxItems },
-      { urls: [url], maxItems },
-    ];
-
-    let runData = null;
-    let lastError = null;
-
-    for (const input of inputCandidates) {
-      try {
-        const res = await fetch(
-          `https://api.apify.com/v2/acts/${ACTOR_ID}/runs?token=${token}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(input),
-          }
-        );
-        const json = await res.json();
-        if (json.data && json.data.id) {
-          runData = json.data;
-          break;
-        }
-        lastError = json;
-      } catch (e) {
-        lastError = e;
+    const res = await fetch(
+      `https://api.apify.com/v2/acts/${ACTOR_ID}/runs?token=${token}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, maxItems }),
       }
+    );
+    const json = await res.json();
+
+    if (!json.data || !json.data.id) {
+      throw new Error('Could not start run: ' + JSON.stringify(json));
     }
 
-    if (!runData) {
-      throw new Error('Could not start actor run. ' + JSON.stringify(lastError));
-    }
-
-    const runId = runData.id;
-    setStatus(`Run started (${runId}). Waiting for completion...`, true);
+    const runId = json.data.id;
+    setStatus(`Run started. Waiting for completion...`, true);
     pollForCompletion(runId, token);
 
   } catch (err) {
@@ -389,16 +385,13 @@ async function fetchResults(datasetId, token) {
     const items = await res.json();
 
     if (!Array.isArray(items) || items.length === 0) {
-      setStatus('No items returned. The actor may need a different input URL.');
+      setStatus('No items returned.');
       document.getElementById('runBtn').disabled = false;
       return;
     }
 
-    // Debug: show raw field names from first item
-    const rawKeys = Object.keys(items[0]);
     document.getElementById('rawBox').textContent =
-      'Fields in first item:\n' + rawKeys.join('\n') +
-      '\n\nFirst item:\n' + JSON.stringify(items[0], null, 2);
+      'First item:\n' + JSON.stringify(items[0], null, 2);
     document.getElementById('rawToggle').style.display = 'block';
 
     renderDeals(items);
@@ -408,40 +401,6 @@ async function fetchResults(datasetId, token) {
     setStatus('Error fetching results: ' + err.message);
     document.getElementById('runBtn').disabled = false;
   }
-}
-
-// Normalize field names across different actor output schemas
-function normalize(item) {
-  const get = (...keys) => {
-    for (const k of keys) {
-      if (item[k] !== undefined && item[k] !== null && item[k] !== '') return item[k];
-    }
-    return null;
-  };
-
-  const title = get('title', 'name', 'dealTitle', 'headline', 'subject');
-  const dealUrl = get('url', 'dealUrl', 'link', 'dealLink', 'href', 'threadUrl');
-  const merchantUrl = get('merchantUrl', 'directUrl', 'storeUrl', 'originalUrl', 'affiliateUrl');
-  const finalUrl = merchantUrl || dealUrl;
-
-  const store = get('store', 'merchant', 'storeName', 'retailer', 'vendor');
-  const image = get('image', 'imageUrl', 'thumbnail', 'img', 'photo', 'picture');
-
-  const price = get('price', 'dealPrice', 'salePrice', 'discountedPrice', 'currentPrice', 'finalPrice');
-  const originalPrice = get('originalPrice', 'regularPrice', 'wasPrice', 'listPrice', 'msrp', 'retailPrice');
-  const discount = get('discount', 'savings', 'discountPercent', 'savingsPercent', 'percentOff', 'percentSavings');
-
-  // Votes: try many field names
-  const votes = get('votes', 'thumbsUp', 'upvotes', 'score', 'rating', 'likes', 'positiveVotes', 'hotness', 'popularity', 'voteCount', 'totalVotes', 'points');
-  const downvotes = get('thumbsDown', 'downvotes', 'negativeVotes');
-
-  // Timestamp
-  const postedAt = get('postedAt', 'createdAt', 'publishedAt', 'date', 'timestamp', 'datePosted', 'postDate', 'startDate', 'pubDate');
-
-  const status = get('status', 'dealStatus', 'label', 'badge');
-  const comments = get('comments', 'commentCount', 'replies', 'numComments');
-
-  return { title, dealUrl, merchantUrl: finalUrl, store, image, price, originalPrice, discount, votes, downvotes, postedAt, status, comments };
 }
 
 function parseVotes(v) {
@@ -463,19 +422,10 @@ function timeAgo(dateStr) {
 }
 
 function isWithin24h(dateStr) {
-  if (!dateStr) return true; // include if no date
+  if (!dateStr) return true;
   const d = new Date(dateStr);
   if (isNaN(d)) return true;
   return (Date.now() - d.getTime()) < 86400000;
-}
-
-function formatPrice(p) {
-  if (!p) return null;
-  const s = String(p).trim();
-  if (s.startsWith('$')) return s;
-  const n = parseFloat(s);
-  if (!isNaN(n)) return '$' + n.toFixed(2);
-  return s;
 }
 
 function renderDeals(rawItems) {
@@ -484,57 +434,60 @@ function renderDeals(rawItems) {
   grid.innerHTML = '';
 
   const items = rawItems
-    .map(normalize)
-    .filter(d => d.title)
-    .filter(d => isWithin24h(d.postedAt))
-    .filter(d => parseVotes(d.votes) >= minVotes)
-    .sort((a, b) => parseVotes(b.votes) - parseVotes(a.votes));
+    .filter(d => d.dealTitle && !d.isExpired)
+    .filter(d => isWithin24h(d.threadIsoDatetime))
+    .filter(d => parseVotes(d.socialVoteCount) >= minVotes)
+    .sort((a, b) => parseVotes(b.socialVoteCount) - parseVotes(a.socialVoteCount));
 
   document.getElementById('summary').textContent =
-    `${items.length} deals found (${rawItems.length} total from actor, filtered to last 24h with ${minVotes}+ votes)`;
+    `${items.length} deals · ${rawItems.length} total from actor · last 24h · min ${minVotes} votes`;
 
   if (items.length === 0) {
-    grid.innerHTML = `<div class="empty">No deals matched the filters.<br>Try lowering the min votes or check the debug fields below.</div>`;
+    grid.innerHTML = `<div class="empty">No deals matched the filters.<br>Try lowering the min votes or switching the source.</div>`;
     return;
   }
 
   for (const d of items) {
-    const votes = parseVotes(d.votes);
-    const priceStr = formatPrice(d.price);
-    const origStr = formatPrice(d.originalPrice);
-    const ago = timeAgo(d.postedAt);
-    const isHot = votes >= 20;
+    const votes = parseVotes(d.socialVoteCount);
+    const ago = timeAgo(d.threadIsoDatetime);
+
+    const badges = [];
+    if (d.isFireDeal)      badges.push('<span class="badge badge-fire">Fire</span>');
+    if (d.isFrontpageDeal) badges.push('<span class="badge badge-front">Frontpage</span>');
+    if (d.isPopularDeal)   badges.push('<span class="badge badge-pop">Popular</span>');
+    if (d.isNew)           badges.push('<span class="badge badge-new">New</span>');
+    if (d.hasRebate)       badges.push('<span class="badge badge-rebate">Rebate</span>');
 
     const card = document.createElement('div');
-    card.className = 'card';
+    card.className = 'card' + (d.isFireDeal ? ' fire' : '');
     card.innerHTML = `
-      ${d.image
-        ? `<img class="card-img" src="${escHtml(d.image)}" alt="" onerror="this.style.display='none'" loading="lazy" />`
+      ${d.dealImageUrl
+        ? `<img class="card-img" src="${escHtml(d.dealImageUrl)}" alt="" onerror="this.style.display='none'" loading="lazy" />`
         : `<div class="card-img-placeholder">🏷️</div>`
       }
       <div class="card-body">
-        ${d.store ? `<div class="card-store">${escHtml(d.store)}</div>` : ''}
-        <div class="card-title">
-          ${isHot ? '<span class="badge-hot">Hot</span> ' : ''}${escHtml(d.title)}
+        <div class="card-store-row">
+          ${d.storeLogoUrl ? `<img class="store-logo" src="${escHtml(d.storeLogoUrl)}" alt="${escHtml(d.storeName || '')}" onerror="this.style.display='none'" />` : ''}
+          ${d.storeName ? `<span class="card-store">${escHtml(d.storeName)}</span>` : ''}
         </div>
-        ${priceStr ? `
+        ${badges.length ? `<div class="card-badges">${badges.join('')}</div>` : ''}
+        <div class="card-title">${escHtml(d.dealTitle)}</div>
+        ${(d.finalPriceText || d.listPriceText || d.discount) ? `
         <div class="card-price-row">
-          <span class="card-price">${escHtml(priceStr)}</span>
-          ${origStr ? `<span class="card-orig">${escHtml(origStr)}</span>` : ''}
-          ${d.discount ? `<span class="card-discount">${escHtml(String(d.discount))}% off</span>` : ''}
+          ${d.finalPriceText ? `<span class="card-price">${escHtml(d.finalPriceText)}</span>` : ''}
+          ${d.listPriceText  ? `<span class="card-orig">${escHtml(d.listPriceText)}</span>` : ''}
+          ${d.discount       ? `<span class="card-discount">${escHtml(String(d.discount))}% off</span>` : ''}
         </div>` : ''}
         <div class="card-meta">
-          <span class="votes ${votes === 0 ? 'zero' : ''}">
-            ${votes > 0 ? '▲ ' + votes + ' votes' : 'No votes'}
-            ${d.downvotes ? ' / ▼ ' + parseVotes(d.downvotes) : ''}
+          <span class="votes ${votes === 0 ? 'zero' : ''}">▲ ${votes}</span>
+          <span class="meta-right">
+            ${ago}
+            ${d.socialCommentCount ? ` · ${d.socialCommentCount} comments` : ''}
+            ${d.viewsCount ? ` · ${d.viewsCount.toLocaleString()} views` : ''}
           </span>
-          <span>${ago}${d.comments ? ' · ' + d.comments + ' comments' : ''}</span>
         </div>
       </div>
-      ${d.merchantUrl
-        ? `<a class="card-link" href="${escHtml(d.merchantUrl)}" target="_blank" rel="noopener">Go to Deal →</a>`
-        : ''
-      }
+      <a class="card-link" href="${escHtml(d.dealThreadUrl)}" target="_blank" rel="noopener">View Deal →</a>
     `;
     grid.appendChild(card);
   }
