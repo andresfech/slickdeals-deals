@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SlickDeals — Best Deals Last 24h</title>
+  <title>SlickDeals — Hot Deals</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -42,8 +42,9 @@
       padding: 8px 12px;
       border-radius: 6px;
       font-size: 0.9rem;
-      min-width: 200px;
+      min-width: 180px;
     }
+    .field input[type="text"] { min-width: 140px; }
     .field input:focus, .field select:focus {
       outline: none;
       border-color: #f97316;
@@ -85,9 +86,20 @@
     @keyframes spin { to { transform: rotate(360deg); } }
 
     #summary {
-      padding: 8px 24px 0;
+      padding: 6px 24px 0;
       font-size: 0.82rem;
       color: #64748b;
+    }
+
+    #truncWarning {
+      display: none;
+      margin: 6px 24px 0;
+      background: #451a03;
+      color: #fb923c;
+      border: 1px solid #7c2d12;
+      border-radius: 6px;
+      padding: 8px 14px;
+      font-size: 0.82rem;
     }
 
     #grid {
@@ -203,8 +215,13 @@
     .votes.zero { color: #64748b; }
     .meta-right { text-align: right; }
 
+    .card-actions {
+      display: flex;
+      border-top: 1px solid #2d3148;
+    }
     .card-link {
       display: block;
+      flex: 1;
       text-align: center;
       background: #0f1117;
       color: #f97316;
@@ -212,10 +229,18 @@
       font-size: 0.85rem;
       font-weight: 600;
       text-decoration: none;
-      border-top: 1px solid #2d3148;
       transition: background 0.1s;
     }
     .card-link:hover { background: #1e2235; }
+    .card-link.secondary {
+      color: #64748b;
+      font-weight: 400;
+      font-size: 0.8rem;
+      border-left: 1px solid #2d3148;
+      flex: 0 0 auto;
+      padding: 9px 12px;
+    }
+    .card-link.secondary:hover { color: #94a3b8; }
 
     .empty {
       grid-column: 1 / -1;
@@ -226,7 +251,7 @@
     }
 
     #rawToggle {
-      padding: 0 24px 8px;
+      padding: 6px 24px 0;
       font-size: 0.78rem;
       color: #4a5568;
       cursor: pointer;
@@ -234,7 +259,7 @@
     }
     #rawBox {
       display: none;
-      margin: 0 24px 16px;
+      margin: 8px 24px 0;
       background: #0f1117;
       border: 1px solid #2d3148;
       border-radius: 6px;
@@ -257,14 +282,14 @@
 <div class="controls">
   <div class="field">
     <label>Apify API Token</label>
-    <input type="password" id="token" value="" placeholder="apify_api_..." />
+    <input type="password" id="token" placeholder="apify_api_..." />
   </div>
   <div class="field">
     <label>Max Results</label>
     <select id="maxItems">
       <option value="50">50 items (~$0.25)</option>
-      <option value="100" selected>100 items (~$0.50)</option>
-      <option value="200">200 items (~$1.00)</option>
+      <option value="100">100 items (~$0.50)</option>
+      <option value="200" selected>200 items (~$1.00)</option>
     </select>
   </div>
   <div class="field">
@@ -289,11 +314,20 @@
       <option value="20">20+</option>
     </select>
   </div>
+  <div class="field">
+    <label>Keyword</label>
+    <input type="text" id="keyword" placeholder="e.g. laptop, shoes…" />
+  </div>
+  <div class="field">
+    <label>Store</label>
+    <input type="text" id="storeFilter" placeholder="e.g. Amazon, Walmart…" />
+  </div>
   <button id="runBtn" onclick="runScrape()">Fetch Deals</button>
 </div>
 
 <div id="status"><span class="spinner" id="spinner"></span><span id="statusText">Ready. Click "Fetch Deals" to start.</span></div>
 <div id="summary"></div>
+<div id="truncWarning">Results may be incomplete — the actor hit the Max Results cap. Increase to 200 to capture more deals.</div>
 <div id="rawToggle" onclick="toggleRaw()" style="display:none">Show raw data (debug)</div>
 <pre id="rawBox"></pre>
 <div id="grid"></div>
@@ -301,17 +335,29 @@
 <script>
 const ACTOR_ID = 'powerai~slickdeals-search-scraper';
 
-// SlickDeals search URL format the actor understands:
-// forum 9 = Hot Deals, sort by votes, filters[date][] = days
+// Restore saved token
+window.addEventListener('DOMContentLoaded', () => {
+  const saved = localStorage.getItem('apify_token');
+  if (saved) document.getElementById('token').value = saved;
+});
+
+// Build URL: forum 9 = Hot Deals, sort by voteavg desc, date filter in days
 function buildSourceUrl() {
   const hours = parseInt(document.getElementById('timeWindow').value);
-  const days = hours ? Math.max(1, Math.ceil(hours / 24)) : 1095; // 1095 = ~all time
+  const days  = hours ? Math.max(1, Math.ceil(hours / 24)) : 1095;
   return 'https://slickdeals.net/search?q=&searcharea=deals&searchin=first'
-    + '&sort=votes&sortorder=desc&searchtype=normal'
+    + '&sort=voteavg&sortorder=desc&searchtype=normal'
     + '&filters%5Bforum%5D%5B%5D=9'
     + '&filters%5Brating%5D%5B%5D=all'
     + '&filters%5Bdate%5D%5B%5D=' + days
     + '&page=1';
+}
+
+// For short windows, double the maxItems so we don't miss recent deals
+function effectiveMaxItems() {
+  const base  = parseInt(document.getElementById('maxItems').value);
+  const hours = parseInt(document.getElementById('timeWindow').value);
+  return (hours > 0 && hours <= 12) ? Math.min(base * 2, 500) : base;
 }
 
 function setStatus(msg, spinning = false) {
@@ -321,12 +367,17 @@ function setStatus(msg, spinning = false) {
 
 async function runScrape() {
   const token = document.getElementById('token').value.trim();
-  const maxItems = parseInt(document.getElementById('maxItems').value);
   if (!token) { alert('Enter your Apify API token.'); return; }
+
+  // Persist token
+  localStorage.setItem('apify_token', token);
+
+  const maxItems = effectiveMaxItems();
 
   document.getElementById('runBtn').disabled = true;
   document.getElementById('grid').innerHTML = '';
   document.getElementById('summary').textContent = '';
+  document.getElementById('truncWarning').style.display = 'none';
   document.getElementById('rawToggle').style.display = 'none';
 
   setStatus('Starting run...', true);
@@ -342,9 +393,7 @@ async function runScrape() {
     );
     const json = await res.json();
     if (!json.data || !json.data.id) throw new Error('Could not start run: ' + JSON.stringify(json));
-
     pollForCompletion(json.data.id, token);
-
   } catch (err) {
     setStatus('Error: ' + err.message);
     document.getElementById('runBtn').disabled = false;
@@ -403,15 +452,15 @@ function timeAgo(dateStr) {
   const d = new Date(dateStr);
   if (isNaN(d)) return '';
   const diff = (Date.now() - d.getTime()) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return Math.round(diff / 60) + 'm ago';
+  if (diff < 60)    return 'just now';
+  if (diff < 3600)  return Math.round(diff / 60) + 'm ago';
   if (diff < 86400) return Math.round(diff / 3600) + 'h ago';
   return Math.round(diff / 86400) + 'd ago';
 }
 
 function isWithinWindow(dateStr) {
   const hours = parseInt(document.getElementById('timeWindow').value);
-  if (!hours) return true; // "All results"
+  if (!hours) return true;
   if (!dateStr) return true;
   const d = new Date(dateStr);
   if (isNaN(d)) return true;
@@ -419,30 +468,41 @@ function isWithinWindow(dateStr) {
 }
 
 function renderDeals(rawItems) {
-  const minVotes = parseInt(document.getElementById('minVotes').value);
-  const grid = document.getElementById('grid');
-  grid.innerHTML = '';
+  const minVotes   = parseInt(document.getElementById('minVotes').value);
+  const keyword    = document.getElementById('keyword').value.trim().toLowerCase();
+  const storeInput = document.getElementById('storeFilter').value.trim().toLowerCase();
+  const maxItems   = parseInt(document.getElementById('maxItems').value);
+  const grid       = document.getElementById('grid');
+  grid.innerHTML   = '';
+
+  // Warn if actor hit the cap
+  document.getElementById('truncWarning').style.display =
+    rawItems.length >= maxItems ? 'block' : 'none';
 
   const items = rawItems
     .filter(d => d.dealTitle && !d.isExpired)
     .filter(d => isWithinWindow(d.threadIsoDatetime))
     .filter(d => parseVotes(d.socialVoteCount) >= minVotes)
+    .filter(d => !keyword    || d.dealTitle.toLowerCase().includes(keyword))
+    .filter(d => !storeInput || (d.storeName || '').toLowerCase().includes(storeInput))
     .sort((a, b) => parseVotes(b.socialVoteCount) - parseVotes(a.socialVoteCount));
 
   const hours = parseInt(document.getElementById('timeWindow').value);
   const windowLabel = hours ? `last ${hours}h` : 'all time';
   document.getElementById('headerSub').textContent = `${windowLabel} · sorted by votes`;
   document.getElementById('summary').textContent =
-    `${items.length} deals shown · ${rawItems.length} total from actor · filtered: ${windowLabel}, ${minVotes}+ votes`;
+    `${items.length} deals shown · ${rawItems.length} total from actor · ${windowLabel} · ${minVotes}+ votes`
+    + (keyword    ? ` · keyword: "${keyword}"` : '')
+    + (storeInput ? ` · store: "${storeInput}"` : '');
 
   if (items.length === 0) {
-    grid.innerHTML = `<div class="empty">No deals matched the filters.<br>Try a wider time window or lower min votes.</div>`;
+    grid.innerHTML = `<div class="empty">No deals matched your filters.<br>Try a wider time window, lower min votes, or clear the keyword/store filters.</div>`;
     return;
   }
 
   for (const d of items) {
     const votes = parseVotes(d.socialVoteCount);
-    const ago = timeAgo(d.threadIsoDatetime);
+    const ago   = timeAgo(d.threadIsoDatetime);
 
     const badges = [];
     if (d.isFireDeal)      badges.push('<span class="badge badge-fire">Fire</span>');
@@ -450,6 +510,9 @@ function renderDeals(rawItems) {
     if (d.isPopularDeal)   badges.push('<span class="badge badge-pop">Popular</span>');
     if (d.isNew)           badges.push('<span class="badge badge-new">New</span>');
     if (d.hasRebate)       badges.push('<span class="badge badge-rebate">Rebate</span>');
+
+    const buyUrl      = d.dealShareUrl  || d.dealThreadUrl;
+    const discussUrl  = d.dealThreadUrl;
 
     const card = document.createElement('div');
     card.className = 'card' + (d.isFireDeal ? ' fire' : '');
@@ -461,14 +524,14 @@ function renderDeals(rawItems) {
       <div class="card-body">
         <div class="card-store-row">
           ${d.storeLogoUrl ? `<img class="store-logo" src="${escHtml(d.storeLogoUrl)}" alt="${escHtml(d.storeName || '')}" onerror="this.style.display='none'" />` : ''}
-          ${d.storeName ? `<span class="card-store">${escHtml(d.storeName)}</span>` : ''}
+          ${d.storeName    ? `<span class="card-store">${escHtml(d.storeName)}</span>` : ''}
         </div>
         ${badges.length ? `<div class="card-badges">${badges.join('')}</div>` : ''}
         <div class="card-title">${escHtml(d.dealTitle)}</div>
         ${(d.finalPriceText || d.listPriceText || d.discount) ? `
         <div class="card-price-row">
           ${d.finalPriceText ? `<span class="card-price">${escHtml(d.finalPriceText)}</span>` : ''}
-          ${d.listPriceText  ? `<span class="card-orig">${escHtml(d.listPriceText)}</span>` : ''}
+          ${d.listPriceText  ? `<span class="card-orig">${escHtml(d.listPriceText)}</span>`   : ''}
           ${d.discount       ? `<span class="card-discount">${escHtml(String(d.discount))}% off</span>` : ''}
         </div>` : ''}
         <div class="card-meta">
@@ -476,11 +539,16 @@ function renderDeals(rawItems) {
           <span class="meta-right">
             ${ago}
             ${d.socialCommentCount ? ` · ${d.socialCommentCount} comments` : ''}
-            ${d.viewsCount ? ` · ${d.viewsCount.toLocaleString()} views` : ''}
+            ${d.viewsCount         ? ` · ${d.viewsCount.toLocaleString()} views` : ''}
           </span>
         </div>
       </div>
-      <a class="card-link" href="${escHtml(d.dealThreadUrl)}" target="_blank" rel="noopener">View Deal →</a>
+      <div class="card-actions">
+        <a class="card-link" href="${escHtml(buyUrl)}" target="_blank" rel="noopener">View Deal →</a>
+        ${discussUrl !== buyUrl
+          ? `<a class="card-link secondary" href="${escHtml(discussUrl)}" target="_blank" rel="noopener" title="Forum thread">💬</a>`
+          : ''}
+      </div>
     `;
     grid.appendChild(card);
   }
