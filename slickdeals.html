@@ -251,7 +251,7 @@
 
 <header>
   <h1>SlickDeals Hot Deals</h1>
-  <span>Last 24 hours · Sorted by votes</span>
+  <span id="headerSub">Sorted by votes</span>
 </header>
 
 <div class="controls">
@@ -262,10 +262,9 @@
   <div class="field">
     <label>Source</label>
     <select id="sourceUrl">
-      <option value="https://slickdeals.net/newsearch.php?mode=frontpage&sortby=votes">Frontpage — by Votes</option>
-      <option value="https://slickdeals.net/newsearch.php?mode=frontpage&sortby=newest">Frontpage — Newest</option>
-      <option value="https://slickdeals.net/newsearch.php?mode=popdeals&sortby=votes">Hot Deals — by Votes</option>
-      <option value="https://slickdeals.net/newsearch.php?mode=popdeals&sortby=newest">Hot Deals — Newest</option>
+      <option value="https://slickdeals.net/deals/">Frontpage Deals</option>
+      <option value="https://slickdeals.net/deals/?sortType=recent">Frontpage — Most Recent</option>
+      <option value="https://slickdeals.net/coupons/popular-deals/">Popular / Hot Deals</option>
     </select>
   </div>
   <div class="field">
@@ -277,11 +276,21 @@
     </select>
   </div>
   <div class="field">
+    <label>Posted Within</label>
+    <select id="timeWindow">
+      <option value="6">Last 6 hours</option>
+      <option value="12">Last 12 hours</option>
+      <option value="24" selected>Last 24 hours</option>
+      <option value="48">Last 48 hours</option>
+      <option value="0">All results</option>
+    </select>
+  </div>
+  <div class="field">
     <label>Min Votes</label>
     <select id="minVotes">
       <option value="0">Any</option>
-      <option value="3">3+</option>
-      <option value="5" selected>5+</option>
+      <option value="3" selected>3+</option>
+      <option value="5">5+</option>
       <option value="10">10+</option>
       <option value="20">20+</option>
     </select>
@@ -421,11 +430,13 @@ function timeAgo(dateStr) {
   return Math.round(diff / 86400) + 'd ago';
 }
 
-function isWithin24h(dateStr) {
+function isWithinWindow(dateStr) {
+  const hours = parseInt(document.getElementById('timeWindow').value);
+  if (!hours) return true; // "All results"
   if (!dateStr) return true;
   const d = new Date(dateStr);
   if (isNaN(d)) return true;
-  return (Date.now() - d.getTime()) < 86400000;
+  return (Date.now() - d.getTime()) < hours * 3600000;
 }
 
 function renderDeals(rawItems) {
@@ -435,12 +446,15 @@ function renderDeals(rawItems) {
 
   const items = rawItems
     .filter(d => d.dealTitle && !d.isExpired)
-    .filter(d => isWithin24h(d.threadIsoDatetime))
+    .filter(d => isWithinWindow(d.threadIsoDatetime))
     .filter(d => parseVotes(d.socialVoteCount) >= minVotes)
     .sort((a, b) => parseVotes(b.socialVoteCount) - parseVotes(a.socialVoteCount));
 
+  const hours = parseInt(document.getElementById('timeWindow').value);
+  const windowLabel = hours ? `last ${hours}h` : 'all time';
+  document.getElementById('headerSub').textContent = `${windowLabel} · sorted by votes`;
   document.getElementById('summary').textContent =
-    `${items.length} deals · ${rawItems.length} total from actor · last 24h · min ${minVotes} votes`;
+    `${items.length} deals shown · ${rawItems.length} total from actor · filtered: ${windowLabel}, ${minVotes}+ votes`;
 
   if (items.length === 0) {
     grid.innerHTML = `<div class="empty">No deals matched the filters.<br>Try lowering the min votes or switching the source.</div>`;
