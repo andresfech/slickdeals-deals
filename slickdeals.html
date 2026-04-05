@@ -337,7 +337,7 @@ async function runScrape() {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: buildSourceUrl(), maxItems }),
+        body: JSON.stringify({ searchUrl: buildSourceUrl(), maxItems }),
       }
     );
     const json = await res.json();
