@@ -260,19 +260,11 @@
     <input type="password" id="token" value="" placeholder="apify_api_..." />
   </div>
   <div class="field">
-    <label>Source</label>
-    <select id="sourceUrl">
-      <option value="https://slickdeals.net/deals/">Frontpage Deals</option>
-      <option value="https://slickdeals.net/deals/?sortType=recent">Frontpage — Most Recent</option>
-      <option value="https://slickdeals.net/coupons/popular-deals/">Popular / Hot Deals</option>
-    </select>
-  </div>
-  <div class="field">
-    <label>Max Results</label>
+    <label>Max Results / Source</label>
     <select id="maxItems">
-      <option value="50">50 items (~$0.25)</option>
-      <option value="100" selected>100 items (~$0.50)</option>
-      <option value="200">200 items (~$1.00)</option>
+      <option value="50">50 / source (~$0.50 total)</option>
+      <option value="100" selected>100 / source (~$1.00 total)</option>
+      <option value="200">200 / source (~$2.00 total)</option>
     </select>
   </div>
   <div class="field">
@@ -306,7 +298,13 @@
 
 <script>
 const ACTOR_ID = 'powerai~slickdeals-search-scraper';
-let pollInterval = null;
+
+// All sources scraped every run — results are merged and deduplicated
+const SOURCES = [
+  { label: 'Frontpage',    url: 'https://slickdeals.net/deals/' },
+  { label: 'Popular/Hot',  url: 'https://slickdeals.net/coupons/popular-deals/' },
+  { label: 'Recent',       url: 'https://slickdeals.net/deals/?sortType=recent' },
+];
 
 function setStatus(msg, spinning = false) {
   document.getElementById('statusText').textContent = msg;
@@ -315,9 +313,7 @@ function setStatus(msg, spinning = false) {
 
 async function runScrape() {
   const token = document.getElementById('token').value.trim();
-  const url = document.getElementById('sourceUrl').value;
   const maxItems = parseInt(document.getElementById('maxItems').value);
-
   if (!token) { alert('Enter your Apify API token.'); return; }
 
   document.getElementById('runBtn').disabled = true;
@@ -325,26 +321,43 @@ async function runScrape() {
   document.getElementById('summary').textContent = '';
   document.getElementById('rawToggle').style.display = 'none';
 
-  setStatus('Starting actor run on Apify...', true);
-
   try {
-    const res = await fetch(
-      `https://api.apify.com/v2/acts/${ACTOR_ID}/runs?token=${token}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, maxItems }),
-      }
-    );
-    const json = await res.json();
+    // Kick off all runs in parallel
+    setStatus(`Starting ${SOURCES.length} runs in parallel...`, true);
+    const runIds = await Promise.all(SOURCES.map(s => startRun(token, s.url, maxItems)));
 
-    if (!json.data || !json.data.id) {
-      throw new Error('Could not start run: ' + JSON.stringify(json));
+    // Poll all runs and collect datasets
+    setStatus(`Waiting for all ${SOURCES.length} runs to finish...`, true);
+    const datasetIds = await Promise.all(runIds.map((id, i) => waitForRun(id, token, SOURCES[i].label)));
+
+    // Fetch all datasets
+    setStatus('Fetching results from all sources...', true);
+    const allArrays = await Promise.all(datasetIds.map(id => fetchDataset(id, token)));
+    const combined = allArrays.flat();
+
+    // Deduplicate by threadId
+    const seen = new Set();
+    const unique = combined.filter(d => {
+      const key = d.threadId || d.uniqueId || d.dealTitle;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    if (unique.length === 0) {
+      setStatus('No items returned from any source.');
+      document.getElementById('runBtn').disabled = false;
+      return;
     }
 
-    const runId = json.data.id;
-    setStatus(`Run started. Waiting for completion...`, true);
-    pollForCompletion(runId, token);
+    document.getElementById('rawBox').textContent =
+      `Total raw: ${combined.length} · After dedup: ${unique.length}\n\nFirst item:\n` +
+      JSON.stringify(unique[0], null, 2);
+    document.getElementById('rawToggle').style.display = 'block';
+
+    renderDeals(unique);
+    document.getElementById('runBtn').disabled = false;
+    setStatus('Done.');
 
   } catch (err) {
     setStatus('Error: ' + err.message);
@@ -352,64 +365,50 @@ async function runScrape() {
   }
 }
 
-function pollForCompletion(runId, token) {
-  let attempts = 0;
-  const maxAttempts = 120; // 10 min max
-
-  pollInterval = setInterval(async () => {
-    attempts++;
-    try {
-      const res = await fetch(`https://api.apify.com/v2/actor-runs/${runId}?token=${token}`);
-      const json = await res.json();
-      const run = json.data;
-      const status = run.status;
-      const elapsed = Math.round((Date.now() - new Date(run.startedAt).getTime()) / 1000);
-
-      setStatus(`Run ${status} — ${elapsed}s elapsed...`, status === 'RUNNING');
-
-      if (status === 'SUCCEEDED') {
-        clearInterval(pollInterval);
-        setStatus('Run complete. Fetching results...', true);
-        fetchResults(run.defaultDatasetId, token);
-      } else if (['FAILED', 'ABORTED', 'TIMED-OUT'].includes(status)) {
-        clearInterval(pollInterval);
-        setStatus(`Run ${status}. Check Apify console for details.`);
-        document.getElementById('runBtn').disabled = false;
-      } else if (attempts >= maxAttempts) {
-        clearInterval(pollInterval);
-        setStatus('Timed out waiting. Check Apify console.');
-        document.getElementById('runBtn').disabled = false;
-      }
-    } catch (e) {
-      setStatus('Poll error: ' + e.message);
+async function startRun(token, url, maxItems) {
+  const res = await fetch(
+    `https://api.apify.com/v2/acts/${ACTOR_ID}/runs?token=${token}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, maxItems }),
     }
-  }, 5000);
+  );
+  const json = await res.json();
+  if (!json.data || !json.data.id) throw new Error('Failed to start run for ' + url);
+  return json.data.id;
 }
 
-async function fetchResults(datasetId, token) {
-  try {
-    const res = await fetch(
-      `https://api.apify.com/v2/datasets/${datasetId}/items?token=${token}&limit=500&clean=true`
-    );
-    const items = await res.json();
+function waitForRun(runId, token, label) {
+  return new Promise((resolve, reject) => {
+    let attempts = 0;
+    const timer = setInterval(async () => {
+      attempts++;
+      try {
+        const res = await fetch(`https://api.apify.com/v2/actor-runs/${runId}?token=${token}`);
+        const json = await res.json();
+        const run = json.data;
+        if (run.status === 'SUCCEEDED') {
+          clearInterval(timer);
+          resolve(run.defaultDatasetId);
+        } else if (['FAILED', 'ABORTED', 'TIMED-OUT'].includes(run.status)) {
+          clearInterval(timer);
+          reject(new Error(`Run for "${label}" ${run.status}`));
+        } else if (attempts >= 120) {
+          clearInterval(timer);
+          reject(new Error(`Run for "${label}" timed out`));
+        }
+      } catch (e) { clearInterval(timer); reject(e); }
+    }, 5000);
+  });
+}
 
-    if (!Array.isArray(items) || items.length === 0) {
-      setStatus('No items returned.');
-      document.getElementById('runBtn').disabled = false;
-      return;
-    }
-
-    document.getElementById('rawBox').textContent =
-      'First item:\n' + JSON.stringify(items[0], null, 2);
-    document.getElementById('rawToggle').style.display = 'block';
-
-    renderDeals(items);
-    document.getElementById('runBtn').disabled = false;
-    setStatus('Done.');
-  } catch (err) {
-    setStatus('Error fetching results: ' + err.message);
-    document.getElementById('runBtn').disabled = false;
-  }
+async function fetchDataset(datasetId, token) {
+  const res = await fetch(
+    `https://api.apify.com/v2/datasets/${datasetId}/items?token=${token}&limit=500&clean=true`
+  );
+  const items = await res.json();
+  return Array.isArray(items) ? items : [];
 }
 
 function parseVotes(v) {
@@ -457,7 +456,7 @@ function renderDeals(rawItems) {
     `${items.length} deals shown · ${rawItems.length} total from actor · filtered: ${windowLabel}, ${minVotes}+ votes`;
 
   if (items.length === 0) {
-    grid.innerHTML = `<div class="empty">No deals matched the filters.<br>Try lowering the min votes or switching the source.</div>`;
+    grid.innerHTML = `<div class="empty">No deals matched the filters.<br>Try a wider time window or lower min votes.</div>`;
     return;
   }
 
