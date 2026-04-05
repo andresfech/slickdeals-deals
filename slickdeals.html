@@ -300,7 +300,15 @@
 
 <script>
 const ACTOR_ID = 'powerai~slickdeals-search-scraper';
-const SOURCE_URL = 'https://slickdeals.net/forums/filtered/?f=9&sortfield=voteavg&sortorder=desc';
+const BASE_URL  = 'https://slickdeals.net/forums/filtered/?f=9&sortfield=voteavg&sortorder=desc';
+
+// Map hours → threadage in days (SlickDeals URL param)
+function buildSourceUrl() {
+  const hours = parseInt(document.getElementById('timeWindow').value);
+  if (!hours) return BASE_URL; // All time — no threadage filter
+  const days = Math.max(1, Math.ceil(hours / 24));
+  return BASE_URL + '&threadage=' + days;
+}
 
 function setStatus(msg, spinning = false) {
   document.getElementById('statusText').textContent = msg;
@@ -325,7 +333,7 @@ async function runScrape() {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: SOURCE_URL, maxItems }),
+        body: JSON.stringify({ url: buildSourceUrl(), maxItems }),
       }
     );
     const json = await res.json();
